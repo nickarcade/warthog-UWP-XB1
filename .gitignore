@@ -11,7 +11,7 @@ __pycache__
 build/
 .ninja_*
 build.ninja
-port/xboxseries/third_party/imgui/
+port/xboxone/third_party/imgui/
 
 # Generated configs
 compile_commands.json

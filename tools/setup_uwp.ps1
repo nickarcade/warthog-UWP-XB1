@@ -80,7 +80,7 @@ Copy-Item -LiteralPath (Join-Path $built 'SDL3.dll') -Destination (Join-Path $Sd
 Copy-Item -LiteralPath (Join-Path $built 'SDL3.lib') -Destination (Join-Path $Sdl3Root 'lib\SDL3.lib') -Force
 Write-Output "SDL3-UWP 3.4.10: $Sdl3Root"
 
-$imgui = Join-Path $root 'port\xboxseries\third_party\imgui'
+$imgui = Join-Path $root 'port\xboxone\third_party\imgui'
 if (-not (Test-Path -LiteralPath (Join-Path $imgui 'imgui.cpp'))) {
     New-Item -ItemType Directory -Path (Split-Path -Parent $imgui) -Force | Out-Null
     & git clone --depth 1 --branch v1.91.9b https://github.com/ocornut/imgui.git $imgui

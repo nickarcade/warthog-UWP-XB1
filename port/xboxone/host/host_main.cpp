@@ -1,6 +1,13 @@
 #include "host.h"
 #include "xiso_installer.h"
-#include <SDL3/SDL.h>
+#include <EGL/egl.h>
+#include <EGL/eglext.h>
+#if __has_include(<EGL/eglext_angle.h>)
+#include <EGL/eglext_angle.h>
+#endif
+#include <GLES3/gl3.h>
+#include <SDL.h>
+#include <winrt/Windows.UI.Core.h>
 #include <array>
 #include <cstdarg>
 #include <cstdio>
@@ -280,6 +287,130 @@ extern "C" int GUEST_ABI host_decompress_map(const char *source_path, const char
     return 1;
 }
 
+static EGLDisplay g_egl_display = EGL_NO_DISPLAY;
+static EGLConfig  g_egl_config  = nullptr;
+static EGLContext g_egl_context = EGL_NO_CONTEXT;
+static EGLSurface g_egl_surface = EGL_NO_SURFACE;
+
+#ifndef EGL_PLATFORM_ANGLE_MAX_VERSION_MAJOR_ANGLE
+#define EGL_PLATFORM_ANGLE_MAX_VERSION_MAJOR_ANGLE 0x3204
+#endif
+#ifndef EGL_PLATFORM_ANGLE_MAX_VERSION_MINOR_ANGLE
+#define EGL_PLATFORM_ANGLE_MAX_VERSION_MINOR_ANGLE 0x3205
+#endif
+
+extern "C" int host_egl_initialize(void)
+{
+    if (g_egl_display != EGL_NO_DISPLAY && g_egl_context != EGL_NO_CONTEXT && g_egl_surface != EGL_NO_SURFACE)
+        return 1;
+
+    const EGLint displayAttributes[] = {
+        EGL_PLATFORM_ANGLE_TYPE_ANGLE,                  EGL_PLATFORM_ANGLE_TYPE_D3D11_ANGLE,
+        EGL_PLATFORM_ANGLE_DEVICE_TYPE_ANGLE,            EGL_PLATFORM_ANGLE_DEVICE_TYPE_HARDWARE_ANGLE,
+        EGL_PLATFORM_ANGLE_MAX_VERSION_MAJOR_ANGLE,     11,
+        EGL_PLATFORM_ANGLE_MAX_VERSION_MINOR_ANGLE,     0,
+        EGL_PLATFORM_ANGLE_ENABLE_AUTOMATIC_TRIM_ANGLE,  EGL_TRUE,
+        EGL_NONE,
+    };
+
+    PFNEGLGETPLATFORMDISPLAYEXTPROC getPlatformDisplay =
+        reinterpret_cast<PFNEGLGETPLATFORMDISPLAYEXTPROC>(eglGetProcAddress("eglGetPlatformDisplayEXT"));
+    if (getPlatformDisplay) {
+        g_egl_display = getPlatformDisplay(EGL_PLATFORM_ANGLE_ANGLE, EGL_DEFAULT_DISPLAY, displayAttributes);
+    } else {
+        g_egl_display = eglGetPlatformDisplayEXT(EGL_PLATFORM_ANGLE_ANGLE, EGL_DEFAULT_DISPLAY, displayAttributes);
+    }
+
+    if (g_egl_display == EGL_NO_DISPLAY) {
+        g_egl_display = eglGetDisplay(EGL_DEFAULT_DISPLAY);
+    }
+    if (g_egl_display == EGL_NO_DISPLAY) {
+        host_logf(HOST_LOG_ERROR, "EGL: failed to obtain EGL display (error 0x%x)", eglGetError());
+        return 0;
+    }
+
+    EGLint major = 0, minor = 0;
+    if (!eglInitialize(g_egl_display, &major, &minor)) {
+        host_logf(HOST_LOG_ERROR, "EGL: failed to initialize EGL display (error 0x%x)", eglGetError());
+        return 0;
+    }
+    host_logf(HOST_LOG_INFO, "EGL: initialized display version %d.%d (Microsoft ANGLE D3D11)", major, minor);
+
+    const EGLint configAttributes[] = {
+        EGL_RED_SIZE, 8,
+        EGL_GREEN_SIZE, 8,
+        EGL_BLUE_SIZE, 8,
+        EGL_ALPHA_SIZE, 8,
+        EGL_DEPTH_SIZE, 24,
+        EGL_STENCIL_SIZE, 8,
+        EGL_RENDERABLE_TYPE, EGL_OPENGL_ES3_BIT,
+        EGL_SURFACE_TYPE, EGL_WINDOW_BIT,
+        EGL_NONE,
+    };
+
+    EGLint num_configs = 0;
+    if (!eglChooseConfig(g_egl_display, configAttributes, &g_egl_config, 1, &num_configs) || num_configs < 1) {
+        const EGLint fallbackConfigAttributes[] = {
+            EGL_RED_SIZE, 8,
+            EGL_GREEN_SIZE, 8,
+            EGL_BLUE_SIZE, 8,
+            EGL_ALPHA_SIZE, 8,
+            EGL_DEPTH_SIZE, 24,
+            EGL_RENDERABLE_TYPE, EGL_OPENGL_ES3_BIT,
+            EGL_NONE,
+        };
+        if (!eglChooseConfig(g_egl_display, fallbackConfigAttributes, &g_egl_config, 1, &num_configs) || num_configs < 1) {
+            host_logf(HOST_LOG_ERROR, "EGL: failed to choose GLES 3.0 config (error 0x%x)", eglGetError());
+            return 0;
+        }
+    }
+
+    const EGLint contextAttributes[] = {
+        EGL_CONTEXT_CLIENT_VERSION, 3,
+        EGL_NONE,
+    };
+    g_egl_context = eglCreateContext(g_egl_display, g_egl_config, EGL_NO_CONTEXT, contextAttributes);
+    if (g_egl_context == EGL_NO_CONTEXT) {
+        host_logf(HOST_LOG_ERROR, "EGL: failed to create GLES 3.0 context (error 0x%x)", eglGetError());
+        return 0;
+    }
+
+    winrt::com_ptr<::IInspectable> inspectable;
+    if (auto core = winrt::Windows::UI::Core::CoreWindow::GetForCurrentThread())
+        inspectable = core.as<::IInspectable>();
+    IInspectable *window = inspectable.get();
+    if (!window) {
+        host_logf(HOST_LOG_ERROR, "EGL: failed to get CoreWindow IInspectable");
+        return 0;
+    }
+
+    g_egl_surface = eglCreateWindowSurface(g_egl_display, g_egl_config, static_cast<EGLNativeWindowType>(window), nullptr);
+    if (g_egl_surface == EGL_NO_SURFACE) {
+        host_logf(HOST_LOG_ERROR, "EGL: failed to create window surface (error 0x%x)", eglGetError());
+        return 0;
+    }
+
+    if (!eglMakeCurrent(g_egl_display, g_egl_surface, g_egl_surface, g_egl_context)) {
+        host_logf(HOST_LOG_ERROR, "EGL: failed to make current context (error 0x%x)", eglGetError());
+        return 0;
+    }
+
+    host_logf(HOST_LOG_INFO, "EGL: ANGLE D3D11 / GLES 3.0 context and surface current");
+    return 1;
+}
+
+extern "C" void host_egl_swap_buffers(void)
+{
+    if (g_egl_display != EGL_NO_DISPLAY && g_egl_surface != EGL_NO_SURFACE) {
+        eglSwapBuffers(g_egl_display, g_egl_surface);
+    }
+}
+
+extern "C" void *host_egl_get_proc_address(const char *procname)
+{
+    return reinterpret_cast<void *>(eglGetProcAddress(procname));
+}
+
 static LONG WINAPI log_unhandled_exception(EXCEPTION_POINTERS *details) {
     if (details && details->ExceptionRecord && details->ContextRecord) {
         const EXCEPTION_RECORD *record = details->ExceptionRecord;
@@ -409,13 +540,14 @@ extern "C" int SDL_main(int, char **) {
     if (internal_maps_error)
         host_logf(HOST_LOG_WARN, "could not create internal custom_maps: %s", internal_maps_error.message().c_str());
     SetUnhandledExceptionFilter(log_unhandled_exception);
-    host_logf(HOST_LOG_INFO, "Warthog UWP 0.7.5 starting");
-    SDL_SetHint(SDL_HINT_JOYSTICK_WGI, "1");
+    host_logf(HOST_LOG_INFO, "Warthog UWP 0.7.5 starting (Microsoft ANGLE D3D11 / GLES 3.0 backend)");
+    SDL_SetMainReady();
+    SDL_SetHint("SDL_JOYSTICK_WGI", "1");
     SDL_SetHint(SDL_HINT_XINPUT_ENABLED, "0");
     int physical_width = 1920, physical_height = 1080;
     uwp_SetScreenSize(physical_width, physical_height);
     host_sdl_set_backbuffer_size(physical_width, physical_height);
-    for (const wchar_t *library : {L"libuwp.dll", L"libgallium_wgl.dll", L"opengl32.dll"}) {
+    for (const wchar_t *library : {L"libuwp.dll", L"libEGL.dll", L"libGLESv2.dll"}) {
         SetLastError(ERROR_SUCCESS);
         HMODULE module = LoadPackagedLibrary(library, 0);
         if (!module)

@@ -20,7 +20,7 @@ from .linux_build import (LINUX_PROFILE, XDK_INCLUDE, compile_launcher,
                           profile_use_flags, xdk_headers)
 from .ninja_syntax import Writer
 
-PORT_DIR = Path("port/xboxseries")
+PORT_DIR = Path("port/xboxone")
 ANDROID_DIR = Path("port/android")
 LINUX_DIR = Path("port/linux")
 BUILD = Path("build/uwp")
@@ -107,7 +107,7 @@ def generate_uwp_build(n: Writer, sln: Any) -> None:
     guest_gl_c = gen_dir / "guest_gl.c"
     gl_imports = gen_dir / "gl_imports.list"
     n.rule("uwp_gl_stubs",
-           command=(f"{python} tools/android_gl_stubs.py {LINUX_DIR}/src/gl.h "
+           command=(f"{python} tools/android_gl_stubs.py --arch x86_64 {LINUX_DIR}/src/gl.h "
                     f"{gles}/GLES3/gl32.h {gles}/GLES2/gl2ext.h $out_c $out_list"),
            description="UWP GL STUBS")
     n.build(outputs=[guest_gl_c, gl_imports], rule="uwp_gl_stubs",
@@ -141,12 +141,15 @@ def generate_uwp_build(n: Writer, sln: Any) -> None:
     guest_abi_flags = [
         "--target=x86_64-unknown-linux-gnux32", "-DHALO_ANDROID=1",
         "-DHALO_UWP_PC=1",
-        "-DHALO_CUSTOM_EDITION=1", *game_browser_defines(sln),
+        "-DHALO_CUSTOM_EDITION=1", "-DHALO_GLES=1", *game_browser_defines(sln),
         "-DHALO_GUEST_IMAGE_BASE=0x70000000u",
         "-DHALO_XBOX_UWP=1", "-nostdinc", "-fshort-wchar",
         "-fno-stack-protector", "-fno-unwind-tables",
         "-fno-asynchronous-unwind-tables", "-femulated-tls",
         "-fno-pic", "-fno-pie", "-ffp-contract=off", "-O2",
+        "-march=btver2", "-mtune=btver2",
+        "-mavx", "-msse4.2", "-msse4a", "-mpopcnt", "-mbmi", "-mlzcnt", "-mf16c", "-mmovbe",
+        "-mno-avx2", "-mno-fma", "-mno-fma4", "-mno-bmi2",
     ]
     guest_code_flags = [
         "-fms-extensions", "-fcommon", "-fno-strict-aliasing", "-fwrapv",

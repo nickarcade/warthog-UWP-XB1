@@ -39,7 +39,7 @@ Conventions carried over from the Xbox:
 void d3d8_surface_initialize(D3DSurface *surface, D3DFORMAT format, unsigned long width, unsigned long height);
 void d3d8_surface_resize(D3DSurface *surface, D3DFORMAT format, unsigned long width, unsigned long height);
 
-#ifdef HALO_ANDROID
+#if defined(HALO_ANDROID) || defined(HALO_GLES)
 /* OpenGL ES 3 (port/android/README.md): the desktop formats, enumerants
 and entry points used below that ES lacks */
 #define GL_BGRA GL_RGBA
@@ -57,6 +57,85 @@ and entry points used below that ES lacks */
 
 /* what the context supports (gl_initialize) */
 struct xgpu_capabilities xgpu_capabilities;
+#endif
+
+#if defined(HALO_GLES) && !defined(HALO_ANDROID)
+
+#define FRAME_FENCE_SLOTS 8
+static GLsync angle_frame_fences[FRAME_FENCE_SLOTS];
+
+static void host_gl_get_string(GLenum name, int index, char *buffer, unsigned int size)
+{
+	const GLubyte *text = (index >= 0) ? glGetStringi(name, (GLuint)index) : glGetString(name);
+	if (!size) return;
+	buffer[0] = '\0';
+	if (text) {
+		strncpy(buffer, (const char *)text, size - 1);
+		buffer[size - 1] = '\0';
+	}
+}
+
+int host_gl_has_extension(const char *name)
+{
+	GLint count = 0, i;
+	glGetIntegerv(GL_NUM_EXTENSIONS, &count);
+	for (i = 0; i < count; i++) {
+		const char *ext = (const char *)glGetStringi(GL_EXTENSIONS, (GLuint)i);
+		if (ext && strcmp(ext, name) == 0)
+			return 1;
+	}
+	return 0;
+}
+
+void host_gl_fence_frame(unsigned int slot)
+{
+	if (slot >= FRAME_FENCE_SLOTS) return;
+	if (angle_frame_fences[slot])
+		glDeleteSync(angle_frame_fences[slot]);
+	angle_frame_fences[slot] = glFenceSync(GL_SYNC_GPU_COMMANDS_COMPLETE, 0);
+}
+
+void host_gl_wait_frame(unsigned int slot)
+{
+	if (slot >= FRAME_FENCE_SLOTS || !angle_frame_fences[slot]) return;
+	glClientWaitSync(angle_frame_fences[slot], GL_SYNC_FLUSH_COMMANDS_BIT, 1000000000ULL);
+	glDeleteSync(angle_frame_fences[slot]);
+	angle_frame_fences[slot] = NULL;
+}
+
+void host_gl_buffer_write(unsigned int target, unsigned int offset, unsigned int size, const void *data)
+{
+	void *mapping = glMapBufferRange((GLenum)target, (GLintptr)offset, (GLsizeiptr)size,
+	                                 GL_MAP_WRITE_BIT | GL_MAP_UNSYNCHRONIZED_BIT);
+	if (mapping) {
+		memcpy(mapping, data, size);
+		glUnmapBuffer((GLenum)target);
+	} else {
+		glBufferSubData((GLenum)target, (GLintptr)offset, (GLsizeiptr)size, data);
+	}
+}
+
+static void host_gl_read_buffer(GLuint buffer, unsigned int offset, unsigned int size, void *data)
+{
+	const void *mapping;
+	glBindBuffer(GL_COPY_READ_BUFFER, buffer);
+	mapping = glMapBufferRange(GL_COPY_READ_BUFFER, (GLintptr)offset, (GLsizeiptr)size, GL_MAP_READ_BIT);
+	if (mapping) {
+		memcpy(data, mapping, size);
+		glUnmapBuffer(GL_COPY_READ_BUFFER);
+	} else {
+		memset(data, 0, size);
+	}
+	glBindBuffer(GL_COPY_READ_BUFFER, 0);
+}
+
+unsigned int host_gl_read_buffer_word(unsigned int buffer, unsigned int offset)
+{
+	unsigned int word = 0;
+	host_gl_read_buffer((GLuint)buffer, offset, sizeof(word), &word);
+	return word;
+}
+
 #endif
 
 /* ---------- the screen's width

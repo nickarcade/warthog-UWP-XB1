@@ -3,7 +3,7 @@ param([Parameter(Mandatory = $true)][string]$OutputDirectory)
 $ErrorActionPreference = 'Stop'
 Add-Type -AssemblyName System.Drawing
 $root = Split-Path -Parent $PSScriptRoot
-$sourcePath = Join-Path $root 'port\xboxseries\assets\AppLogo.png'
+$sourcePath = Join-Path $root 'port\xboxone\assets\AppLogo.png'
 [IO.Directory]::CreateDirectory($OutputDirectory) | Out-Null
 $sourceImage = [Drawing.Image]::FromFile($sourcePath)
 $source = [Drawing.Bitmap]::new($sourceImage)

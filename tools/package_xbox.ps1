@@ -15,11 +15,10 @@ if (-not $OutputPath) {
 $required = @(
     'Warthog.exe',
     'OpenCEUWP.winmd',
-    'SDL3.dll',
+    'SDL2.dll',
     'libuwp.dll',
-    'opengl32.dll',
-    'libgallium_wgl.dll',
-    'dxil.dll',
+    'libEGL.dll',
+    'libGLESv2.dll',
     'z-1.dll',
     'halo_guest.elf'
 )
@@ -66,7 +65,7 @@ $sourceNotices = [ordered]@{
     'port\third_party\smaa\LICENSE' = 'smaa-LICENSE.txt'
     'port\third_party\stb\LICENSE' = 'stb-LICENSE.txt'
     'port\third_party\tomlc17\LICENSE' = 'tomlc17-LICENSE.txt'
-    'port\xboxseries\third_party\imgui\LICENSE.txt' = 'imgui-LICENSE.txt'
+    'port\xboxone\third_party\imgui\LICENSE.txt' = 'imgui-LICENSE.txt'
 }
 foreach ($notice in $sourceNotices.Keys) {
     if (-not (Test-Path -LiteralPath (Join-Path $sourceRoot $notice))) {
@@ -80,7 +79,7 @@ foreach ($notice in $dependencyNotices) {
 }
 $sdlLicense = Join-Path $BuildDirectory 'sdl3-LICENSE.txt'
 if (-not (Test-Path -LiteralPath $sdlLicense)) {
-    throw 'Missing SDL3 license.'
+    $sdlLicense = Join-Path $BuildDirectory 'sdl2-LICENSE.txt'
 }
 
 $makeAppx = Get-ChildItem -LiteralPath (Join-Path ${env:ProgramFiles(x86)} 'Windows Kits\10\bin') `
@@ -99,7 +98,7 @@ try {
         Copy-Item -LiteralPath (Join-Path $BuildDirectory $name) -Destination $stage
     }
 
-    Copy-Item -LiteralPath (Join-Path $sourceRoot 'port\xboxseries\Package.appxmanifest') `
+    Copy-Item -LiteralPath (Join-Path $sourceRoot 'port\xboxone\Package.appxmanifest') `
         -Destination (Join-Path $stage 'AppxManifest.xml')
     New-Item -ItemType Directory -Path (Join-Path $stage 'Assets') | Out-Null
     Copy-Item -Path (Join-Path $assets '*.png') -Destination (Join-Path $stage 'Assets')
@@ -113,7 +112,9 @@ try {
     foreach ($notice in $dependencyNotices) {
         Copy-Item -LiteralPath (Join-Path $dependencyLicenses $notice) -Destination $stage
     }
-    Copy-Item -LiteralPath $sdlLicense -Destination $stage
+    if (Test-Path -LiteralPath $sdlLicense) {
+        Copy-Item -LiteralPath $sdlLicense -Destination $stage
+    }
 
     if (Test-Path -LiteralPath $OutputPath) {
         Remove-Item -LiteralPath $OutputPath

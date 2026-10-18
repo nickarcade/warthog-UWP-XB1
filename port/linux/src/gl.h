@@ -16,16 +16,29 @@ Windows it is __stdcall too, and SDL would include windows.h without it) */
 #ifndef _WIN32
 #undef APIENTRY
 #endif
-#ifdef HALO_ANDROID
+#if defined(HALO_ANDROID) || defined(HALO_GLES)
 #include <GLES3/gl32.h>
 #include <GLES2/gl2ext.h>
 #define GLAPIENTRY GL_APIENTRY
+#ifndef GL_BGRA
+#define GL_BGRA 0x80E1
+#endif
+#ifndef GL_COMPRESSED_RGB_S3TC_DXT1_EXT
+#define GL_COMPRESSED_RGB_S3TC_DXT1_EXT  0x83F0
+#define GL_COMPRESSED_RGBA_S3TC_DXT1_EXT 0x83F1
+#define GL_COMPRESSED_RGBA_S3TC_DXT3_EXT 0x83F2
+#define GL_COMPRESSED_RGBA_S3TC_DXT5_EXT 0x83F3
+#endif
+#ifndef GL_TEXTURE_MAX_ANISOTROPY_EXT
+#define GL_TEXTURE_MAX_ANISOTROPY_EXT     0x84FE
+#define GL_MAX_TEXTURE_MAX_ANISOTROPY_EXT 0x84FF
+#endif
 #else
 #include <SDL3/SDL_opengl.h>
 #endif
 #pragma pop_macro("APIENTRY")
 
-#ifdef HALO_ANDROID
+#if defined(HALO_ANDROID) || defined(HALO_GLES)
 /* OpenGL ES 3.2 (port/android/README.md); tools/android_gl_stubs.py reads
 this list to generate the guest's entry points */
 /* ANDROID_GL_FUNCTIONS_BEGIN */
@@ -267,7 +280,7 @@ GL_FUNCTIONS(GL_DECLARE_FUNCTION)
 /* call sites use the ordinary names; gl_functions.c, which defines the
 pointers, sees the declarations without these aliases */
 #ifndef GL_FUNCTIONS_DEFINE
-#ifdef HALO_ANDROID
+#if defined(HALO_ANDROID) || defined(HALO_GLES)
 #define glGetString halo_glGetString
 #define glGetIntegerv halo_glGetIntegerv
 #define glCopyImageSubData halo_glCopyImageSubData

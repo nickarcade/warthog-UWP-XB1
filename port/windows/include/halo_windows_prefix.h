@@ -17,6 +17,15 @@ much shorter than the Linux build's halo_linux_prefix.h.
 
 #define HALO_WINDOWS 1
 
+#if defined(WINAPI_FAMILY) && (WINAPI_FAMILY == WINAPI_FAMILY_APP)
+#ifndef HALO_UWP
+#define HALO_UWP 1
+#endif
+#ifndef HALO_GLES
+#define HALO_GLES 1
+#endif
+#endif
+
 /* ---------- pointers inside Xbox data (the 64-bit builds': ninja windows64;
 no-ops in the 32-bit build, as in the Linux build: the shared sources name
 them) */
