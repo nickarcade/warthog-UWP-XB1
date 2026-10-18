@@ -1,0 +1,84 @@
+name: UWP Xbox One Build
+
+on:
+  push:
+    branches:
+      - UWP-Port
+  pull_request:
+    branches:
+      - UWP-Port
+
+jobs:
+  build:
+    runs-on: windows-latest
+    strategy:
+      matrix:
+        configuration: [Debug, Release]
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      with:
+        submodules: recursive
+        fetch-depth: 0
+
+    - name: Setup MSVC and Windows SDK
+      uses: ilammy/msvc-dev-cmd@v1
+      with:
+        arch: x64
+
+    - name: Install Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.11'
+
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install ninja
+        pip install clang
+
+    - name: Setup Windows SDK
+      run: |
+        # Install the latest Windows SDK
+        Invoke-WebRequest -Uri "https://aka.ms/winsdk/10.0.22621.0/windows10.0.22621.sdk.download" -OutFile "winsdk.iso"
+        Mount-DiskImage -ImagePath "winsdk.iso"
+        $disk = Get-DiskImage -ImagePath "winsdk.iso" | Get-Disk
+        $volume = $disk | Get-Partition | Where-Object { $_.DriveLetter -ne $null } | Select-Object -First 1
+        $sdkPath = "$($volume.DriveLetter):\"
+        Write-Output "Windows SDK Path: $sdkPath"
+        Copy-Item "$sdkPath\bin\10.0.22621.0\x64\*" "C:\Program Files\Microsoft Visual Studio\2022\Enterprise\VC\Tools\MSVC\14.34.31931\bin\Hostx64\x64\" -Recurse -Force
+        Dismount-DiskImage -ImagePath "winsdk.iso"
+
+    - name: Setup UWP Dependencies
+      run: |
+        # Placeholder for UWP SDK installation if needed
+        # Typically installed with VS 2022 or via vcpkg
+        Write-Output "Using system Visual Studio UWP support"
+
+    - name: Configure Guest
+      run: |
+        python configure.py --release
+        ninja uwp_guest
+
+    - name: Configure and Build Host (Debug)
+      if: ${{ matrix.configuration == 'Debug' }}
+      run: |
+        # Use the build script with debug configuration
+        $env:CC = "clang-cl.exe"
+        $env:CXX = "clang-cl.exe"
+        .\tools\build.ps1 -Configuration Debug -UwpDeps "C:\bsuwp\_deps\uwpdep-src" -AngleDir "C:\bsuwp\angle"
+
+    - name: Configure and Build Host (Release)
+      if: ${{ matrix.configuration == 'Release' }}
+      run: |
+        $env:CC = "clang-cl.exe"
+        $env:CXX = "clang-cl.exe"
+        .\tools\build.ps1 -Configuration Release -UwpDeps "C:\bsuwp\_deps\uwpdep-src" -AngleDir "C:\bsuwp\angle"
+
+    - name: Upload Artifact
+      uses: actions/upload-artifact@v3
+      with:
+        name: Warthog-Xbox-One-${{ matrix.configuration }}
+        path: build\xbox-uwp\*.appx
+        if-no-files-found: error
