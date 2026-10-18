@@ -1,4 +1,7 @@
-param([string]$OutputDirectory)
+param(
+    [string]$OutputDirectory,
+    [string]$Configuration = 'Release'
+)
 
 $ErrorActionPreference = 'Stop'
 $root = Split-Path -Parent $PSScriptRoot
@@ -12,12 +15,22 @@ if ($LASTEXITCODE) { throw 'Package creation failed.' }
     -CertificatePath (Join-Path $OutputDirectory 'Warthog-UWP.cer')
 if ($LASTEXITCODE) { throw 'Package signing failed.' }
 
+$pdb = Join-Path $root 'build\xbox-uwp\Warthog.pdb'
+if (Test-Path -LiteralPath $pdb) {
+    Copy-Item -LiteralPath $pdb -Destination (Join-Path $OutputDirectory 'Warthog-UWP.pdb') -Force
+}
+
+$vclibsFlavor = if ($Configuration -eq 'Debug') { 'Debug' } else { 'Retail' }
 $dependencySource = Join-Path ${env:ProgramFiles(x86)} `
-    'Microsoft SDKs\Windows Kits\10\ExtensionSDKs\Microsoft.VCLibs\14.0\Appx\Retail\x64'
+    "Microsoft SDKs\Windows Kits\10\ExtensionSDKs\Microsoft.VCLibs\14.0\Appx\$vclibsFlavor\x64"
+if (-not (Test-Path -LiteralPath $dependencySource)) {
+    $dependencySource = Join-Path ${env:ProgramFiles(x86)} `
+        'Microsoft SDKs\Windows Kits\10\ExtensionSDKs\Microsoft.VCLibs\14.0\Appx\Retail\x64'
+}
 if (Test-Path -LiteralPath $dependencySource) {
     $dependencyOutput = Join-Path $OutputDirectory 'Dependencies\x64'
     New-Item -ItemType Directory -Path $dependencyOutput -Force | Out-Null
     Copy-Item -Path (Join-Path $dependencySource '*.appx') -Destination $dependencyOutput -Force
 }
 
-Get-FileHash -Algorithm SHA256 -LiteralPath $package
+Write-Output "Release directory ready: $OutputDirectory"

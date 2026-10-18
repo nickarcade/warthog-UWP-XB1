@@ -1,6 +1,16 @@
 name: UWP Xbox One Build
 
 on:
+  workflow_dispatch:
+    inputs:
+      configuration:
+        description: 'Build Configuration (Debug or Release)'
+        required: true
+        default: 'Debug'
+        type: choice
+        options:
+          - Debug
+          - Release
   push:
     branches:
       - UWP-Port
@@ -8,64 +18,171 @@ on:
     branches:
       - UWP-Port
 
+permissions:
+  contents: write
+
+env:
+  UWP_DEPS_REPOSITORY: https://github.com/worleydl/uwp-dep.git
+  UWP_DEPS_COMMIT: 3960693ee292522a5bcb58bc7d4136a0bb8864af
+  ANGLE_NUGET_URL: https://api.nuget.org/v3-flatcontainer/angle.windowsstore/2.1.13/angle.windowsstore.2.1.13.nupkg
+
 jobs:
   build:
     runs-on: windows-latest
+    timeout-minutes: 60
     strategy:
+      fail-fast: false
       matrix:
-        configuration: [Debug, Release]
+        configuration: ${{ github.event_name == 'workflow_dispatch' && fromJson(format('["{0}"]', inputs.configuration)) || fromJson('["Debug", "Release"]') }}
 
     steps:
-    - name: Checkout code
-      uses: actions/checkout@v4
-      with:
-        submodules: recursive
-        fetch-depth: 0
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
-    - name: Setup MSVC and Windows SDK
-      uses: ilammy/msvc-dev-cmd@v1
-      with:
-        arch: x64
+      - name: Verify toolchain
+        shell: pwsh
+        run: |
+          py -3 --version
+          ninja --version
+          cmake --version
 
-    - name: Install Python
-      uses: actions/setup-python@v4
-      with:
-        python-version: '3.11'
+      - name: Install LLVM 19.1.3
+        uses: KyleMayes/install-llvm-action@ebc0426251bc40c7cd31162802432c68818ab8f0
+        with:
+          version: "19.1.3"
+          directory: ${{ runner.temp }}/llvm-19.1.3
 
-    - name: Install Ninja
-      run: |
-        python -m pip install --upgrade pip
-        pip install ninja
+      - name: Verify pinned compiler
+        shell: pwsh
+        run: |
+          clang --version
+          clang-cl --version
+          if ((clang --version | Select-Object -First 1) -notmatch 'clang version 19\.1\.3') {
+              throw 'LLVM 19.1.3 is not first on PATH.'
+          }
 
-    - name: Check for required tools
-      run: |
-        where python
-        where ninja
-        echo "Checking for PowerShell..."
-        where pwsh
+      - name: Fetch UWP dependencies
+        shell: pwsh
+        run: |
+          git clone --filter=blob:none --branch pd $env:UWP_DEPS_REPOSITORY uwp-deps
+          git -C uwp-deps checkout --detach $env:UWP_DEPS_COMMIT
+          if ((git -C uwp-deps rev-parse HEAD) -ne $env:UWP_DEPS_COMMIT) {
+              throw 'Unexpected UWP dependency revision.'
+          }
 
-    - name: Configure Guest
-      run: |
-        python configure.py --release
-        ninja uwp_guest
+      - name: Fetch ANGLE UWP dependencies
+        shell: pwsh
+        run: |
+          $nupkgPath = Join-Path $env:RUNNER_TEMP "angle.windowsstore.zip"
+          Invoke-WebRequest -Uri $env:ANGLE_NUGET_URL -OutFile $nupkgPath
+          $extractPath = Join-Path $env:RUNNER_TEMP "angle-extract"
+          Expand-Archive -Path $nupkgPath -DestinationPath $extractPath -Force
 
-    - name: Configure and Build Host (Debug)
-      if: ${{ matrix.configuration == 'Debug' }}
-      run: |
-        # Use the build script with debug configuration
-        Write-Output "Building Debug configuration"
-        .\tools\build.ps1 -Configuration Debug -UwpDeps "C:\bsuwp\_deps\uwpdep-src"
+          $targetDir = "port/xboxone/third_party/angle"
+          New-Item -ItemType Directory -Path "$targetDir/include" -Force | Out-Null
+          New-Item -ItemType Directory -Path "$targetDir/bin" -Force | Out-Null
+          New-Item -ItemType Directory -Path "$targetDir/lib" -Force | Out-Null
 
-    - name: Configure and Build Host (Release)
-      if: ${{ matrix.configuration == 'Release' }}
-      run: |
-        # Use the build script with release configuration
-        Write-Output "Building Release configuration"
-        .\tools\build.ps1 -Configuration Release -UwpDeps "C:\bsuwp\_deps\uwpdep-src"
+          Copy-Item -Path "$extractPath/Include/*" -Destination "$targetDir/include" -Recurse -Force
+          Copy-Item -Path "$extractPath/bin/UAP/x64/*" -Destination "$targetDir/bin" -Force
+          Copy-Item -Path "$extractPath/bin/UAP/x64/*" -Destination "$targetDir/lib" -Force
+          Write-Host "ANGLE.WindowsStore binaries and headers extracted to $targetDir."
 
-    - name: Upload Artifact
-      uses: actions/upload-artifact@v3
-      with:
-        name: Warthog-Xbox-One-${{ matrix.configuration }}
-        path: build\xbox-uwp\*.appx
-        if-no-files-found: error
+      - name: Fetch Dear ImGui
+        shell: pwsh
+        run: |
+          $imguiDestination = "port/xboxone/third_party/imgui"
+          if (-not (Test-Path -LiteralPath "$imguiDestination/imgui.cpp")) {
+              New-Item -ItemType Directory -Path (Split-Path -Parent $imguiDestination) -Force | Out-Null
+              git clone --depth 1 --branch v1.91.9b https://github.com/ocornut/imgui.git $imguiDestination
+              if ($LASTEXITCODE) { throw 'Dear ImGui clone failed.' }
+          }
+
+      - name: Build UWP (${{ matrix.configuration }})
+        id: uwp_build
+        shell: pwsh
+        env:
+          HALO_XBOX_GLES_INCLUDE: ${{ github.workspace }}\port\xboxone\third_party\angle\include
+        run: |
+          $log = Join-Path $env:RUNNER_TEMP 'uwp-build.log'
+          $ErrorActionPreference = 'Continue'
+          & pwsh -NoProfile -File .\tools\build.ps1 `
+              -UwpDeps "$env:GITHUB_WORKSPACE\uwp-deps" `
+              -AngleDir "$env:GITHUB_WORKSPACE\port\xboxone\third_party\angle" `
+              -Jobs 4 `
+              -Configuration '${{ matrix.configuration }}' 2>&1 |
+              Tee-Object -FilePath $log
+          $succeeded = $LASTEXITCODE -eq 0
+          "succeeded=$($succeeded.ToString().ToLowerInvariant())" | Out-File $env:GITHUB_OUTPUT -Append
+
+      - name: Report UWP build failure
+        if: always() && steps.uwp_build.outputs.succeeded != 'true'
+        shell: pwsh
+        run: |
+          $log = Join-Path $env:RUNNER_TEMP 'uwp-build.log'
+          $tail = (Get-Content $log -Tail 80) -join "`n"
+          @(
+              '## UWP build failed'
+              ''
+              '```text'
+              $tail
+              '```'
+          ) | Out-File $env:GITHUB_STEP_SUMMARY -Encoding utf8
+          if ($tail.Length -gt 3500) { $tail = $tail.Substring($tail.Length - 3500) }
+          $annotation = $tail.Replace('%', '%25').Replace("`r", '%0D').Replace("`n", '%0A')
+          Write-Host "::error file=.github/workflows/uwp-xboxone-build.yml,line=1,title=UWP build failed::$annotation"
+          exit 1
+
+      - name: Import signing certificate
+        id: signing
+        shell: pwsh
+        env:
+          PFX_BASE64: ${{ secrets.UWP_SIGNING_PFX_BASE64 }}
+          PFX_PASSWORD: ${{ secrets.UWP_SIGNING_PASSWORD }}
+        run: |
+          if ([string]::IsNullOrWhiteSpace($env:PFX_BASE64)) {
+              Write-Warning 'No persistent signing certificate configured; this build will use a temporary certificate.'
+              "persistent=false" | Out-File $env:GITHUB_OUTPUT -Append
+              exit 0
+          }
+          $pfx = Join-Path $env:RUNNER_TEMP 'Warthog-UWP.pfx'
+          [IO.File]::WriteAllBytes($pfx, [Convert]::FromBase64String($env:PFX_BASE64))
+          $password = ConvertTo-SecureString $env:PFX_PASSWORD -AsPlainText -Force
+          $certificate = Import-PfxCertificate -FilePath $pfx -CertStoreLocation Cert:\CurrentUser\My -Password $password -Exportable
+          if ($certificate.Subject -ne 'CN=ReviveMe') { throw 'The signing certificate publisher must be CN=ReviveMe.' }
+          "thumbprint=$($certificate.Thumbprint)" | Out-File $env:GITHUB_OUTPUT -Append
+          "pfx=$pfx" | Out-File $env:GITHUB_OUTPUT -Append
+          "persistent=true" | Out-File $env:GITHUB_OUTPUT -Append
+
+      - name: Package UWP
+        shell: pwsh
+        run: |
+          $output = "dist\Warthog-UWP-${{ matrix.configuration }}"
+          .\tools\make_release.ps1 -OutputDirectory $output -Configuration '${{ matrix.configuration }}'
+          $archive = "$output.zip"
+          Compress-Archive -Path "$output\*" -DestinationPath $archive -CompressionLevel Optimal
+          $hash = (Get-FileHash -Algorithm SHA256 $archive).Hash
+          "$hash  $([IO.Path]::GetFileName($archive))" | Set-Content "$archive.sha256" -Encoding Ascii
+
+      - name: Remove signing certificate
+        if: always() && steps.signing.outputs.persistent == 'true'
+        shell: pwsh
+        run: |
+          Remove-Item "Cert:\CurrentUser\My\${{ steps.signing.outputs.thumbprint }}" -ErrorAction SilentlyContinue
+          Remove-Item '${{ steps.signing.outputs.pfx }}' -Force -ErrorAction SilentlyContinue
+
+      - name: Upload Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: Warthog-Xbox-One-${{ matrix.configuration }}
+          path: |
+            dist/Warthog-UWP-${{ matrix.configuration }}/Warthog-UWP-x64.appx
+            dist/Warthog-UWP-${{ matrix.configuration }}/Warthog-UWP.cer
+            dist/Warthog-UWP-${{ matrix.configuration }}/Warthog-UWP.pdb
+            dist/Warthog-UWP-${{ matrix.configuration }}/Dependencies/
+            dist/Warthog-UWP-${{ matrix.configuration }}.zip
+            dist/Warthog-UWP-${{ matrix.configuration }}.zip.sha256
+          if-no-files-found: error
+          retention-days: 7

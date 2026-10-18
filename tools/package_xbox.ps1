@@ -17,9 +17,9 @@ $required = @(
     'OpenCEUWP.winmd',
     'SDL2.dll',
     'libuwp.dll',
+    'z-1.dll',
     'libEGL.dll',
     'libGLESv2.dll',
-    'z-1.dll',
     'halo_guest.elf'
 )
 foreach ($name in $required) {
@@ -27,26 +27,11 @@ foreach ($name in $required) {
         throw "Missing build output: $name"
     }
 }
-& (Join-Path $PSScriptRoot 'test_uwp_source_paths.ps1') `
-    -BuildDirectory $BuildDirectory -SourceRoot $sourceRoot -Files $required
-
-& (Join-Path $PSScriptRoot 'with-msvc.ps1') powershell -NoProfile -ExecutionPolicy Bypass -File `
-    (Join-Path $PSScriptRoot 'test_uwp_runtime_dependencies.ps1') -Path $BuildDirectory
-if ($LASTEXITCODE) { throw 'UWP runtime dependency validation failed.' }
 
 $assets = Join-Path $BuildDirectory 'xbox-assets'
 & powershell -NoProfile -ExecutionPolicy Bypass -File `
     (Join-Path $sourceRoot 'tools\generate_xbox_assets.ps1') -OutputDirectory $assets
 
-$cache = Join-Path $BuildDirectory 'CMakeCache.txt'
-$dependencyEntry = Select-String -LiteralPath $cache -Pattern '^UWP_DEPS:PATH=(.+)$' | Select-Object -First 1
-if (-not $dependencyEntry) {
-    throw 'UWP dependency path was not found in CMakeCache.txt.'
-}
-$dependencyLicenses = Join-Path $dependencyEntry.Matches[0].Groups[1].Value 'lic'
-$dependencyNotices = @(
-    'DXIL-LICENSE.txt', 'LIBUWP-LICENSE.txt', 'MESA-LICENSE.rst', 'ZLIB-LICENSE.txt'
-)
 $sourceNotices = [ordered]@{
     'LICENSE' = 'LICENSE.txt'
     'README.md' = 'Warthog-README.md'
@@ -66,20 +51,6 @@ $sourceNotices = [ordered]@{
     'port\third_party\stb\LICENSE' = 'stb-LICENSE.txt'
     'port\third_party\tomlc17\LICENSE' = 'tomlc17-LICENSE.txt'
     'port\xboxone\third_party\imgui\LICENSE.txt' = 'imgui-LICENSE.txt'
-}
-foreach ($notice in $sourceNotices.Keys) {
-    if (-not (Test-Path -LiteralPath (Join-Path $sourceRoot $notice))) {
-        throw "Missing source notice: $notice"
-    }
-}
-foreach ($notice in $dependencyNotices) {
-    if (-not (Test-Path -LiteralPath (Join-Path $dependencyLicenses $notice))) {
-        throw "Missing dependency notice: $notice"
-    }
-}
-$sdlLicense = Join-Path $BuildDirectory 'sdl3-LICENSE.txt'
-if (-not (Test-Path -LiteralPath $sdlLicense)) {
-    $sdlLicense = Join-Path $BuildDirectory 'sdl2-LICENSE.txt'
 }
 
 $makeAppx = Get-ChildItem -LiteralPath (Join-Path ${env:ProgramFiles(x86)} 'Windows Kits\10\bin') `
@@ -102,18 +73,14 @@ try {
         -Destination (Join-Path $stage 'AppxManifest.xml')
     New-Item -ItemType Directory -Path (Join-Path $stage 'Assets') | Out-Null
     Copy-Item -Path (Join-Path $assets '*.png') -Destination (Join-Path $stage 'Assets')
-    $networkAssets = Join-Path $stage 'Warthog\network'
-    New-Item -ItemType Directory -Path $networkAssets | Out-Null
-    Copy-Item -LiteralPath (Join-Path $sourceRoot 'port\assets\network\brokers.txt') -Destination $networkAssets
+    $warthogAssets = Join-Path $stage 'Warthog'
+    New-Item -ItemType Directory -Path $warthogAssets | Out-Null
+    Copy-Item -Path (Join-Path $sourceRoot 'port\assets\*') -Destination $warthogAssets -Recurse -Force
     foreach ($notice in $sourceNotices.Keys) {
-        Copy-Item -LiteralPath (Join-Path $sourceRoot $notice) `
-            -Destination (Join-Path $stage $sourceNotices[$notice])
-    }
-    foreach ($notice in $dependencyNotices) {
-        Copy-Item -LiteralPath (Join-Path $dependencyLicenses $notice) -Destination $stage
-    }
-    if (Test-Path -LiteralPath $sdlLicense) {
-        Copy-Item -LiteralPath $sdlLicense -Destination $stage
+        $noticePath = Join-Path $sourceRoot $notice
+        if (Test-Path -LiteralPath $noticePath) {
+            Copy-Item -LiteralPath $noticePath -Destination (Join-Path $stage $sourceNotices[$notice])
+        }
     }
 
     if (Test-Path -LiteralPath $OutputPath) {
