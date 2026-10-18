@@ -1,4 +1,8 @@
 cmake_minimum_required(VERSION 3.20)
+if(DEFINED ENV{VCToolsInstallDir} AND EXISTS "$ENV{VCToolsInstallDir}/bin/Hostx64/x64/link.exe")
+  file(TO_CMAKE_PATH "$ENV{VCToolsInstallDir}/bin/Hostx64/x64/link.exe" MSVC_LINKER)
+  set(CMAKE_LINKER "${MSVC_LINKER}" CACHE FILEPATH "MSVC linker for /WINMD" FORCE)
+endif()
 project(OpenCEUWP LANGUAGES C CXX ASM_MASM)
 
 set(CMAKE_C_STANDARD 11)
