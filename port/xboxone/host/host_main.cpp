@@ -553,6 +553,11 @@ extern "C" int SDL_main(int, char **) {
         if (!module)
             host_logf(HOST_LOG_ERROR, "LoadPackagedLibrary(%ls) failed: %lu", library, GetLastError());
     }
+    if (host_egl_initialize()) {
+        host_logf(HOST_LOG_INFO, "ANGLE D3D11 EGL display initialized successfully (%dx%d)", physical_width, physical_height);
+    } else {
+        host_logf(HOST_LOG_ERROR, "ANGLE D3D11 EGL display initialization failed");
+    }
 
     std::vector<std::filesystem::path> data_roots{internal};
     if (!same_path(internal, legacy_internal))
@@ -586,7 +591,7 @@ extern "C" int SDL_main(int, char **) {
         xbox_remember_game_data(legacy_internal, selected_data);
     }
     if (selected_data.empty()) {
-        const bool installed = xbox_install_game_data(legacy_internal, internal, selected_data);
+        const bool installed = xbox_install_game_data(internal, selected_data);
         uwp_SetScreenSize(physical_width, physical_height);
         host_sdl_set_backbuffer_size(physical_width, physical_height);
         if (!installed)
