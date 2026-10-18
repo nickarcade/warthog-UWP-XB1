@@ -32,29 +32,17 @@ jobs:
       with:
         python-version: '3.11'
 
-    - name: Install dependencies
+    - name: Install Ninja
       run: |
         python -m pip install --upgrade pip
         pip install ninja
-        pip install clang
 
-    - name: Setup Windows SDK
+    - name: Check for required tools
       run: |
-        # Install the latest Windows SDK
-        Invoke-WebRequest -Uri "https://aka.ms/winsdk/10.0.22621.0/windows10.0.22621.sdk.download" -OutFile "winsdk.iso"
-        Mount-DiskImage -ImagePath "winsdk.iso"
-        $disk = Get-DiskImage -ImagePath "winsdk.iso" | Get-Disk
-        $volume = $disk | Get-Partition | Where-Object { $_.DriveLetter -ne $null } | Select-Object -First 1
-        $sdkPath = "$($volume.DriveLetter):\"
-        Write-Output "Windows SDK Path: $sdkPath"
-        Copy-Item "$sdkPath\bin\10.0.22621.0\x64\*" "C:\Program Files\Microsoft Visual Studio\2022\Enterprise\VC\Tools\MSVC\14.34.31931\bin\Hostx64\x64\" -Recurse -Force
-        Dismount-DiskImage -ImagePath "winsdk.iso"
-
-    - name: Setup UWP Dependencies
-      run: |
-        # Placeholder for UWP SDK installation if needed
-        # Typically installed with VS 2022 or via vcpkg
-        Write-Output "Using system Visual Studio UWP support"
+        where python
+        where ninja
+        echo "Checking for PowerShell..."
+        where pwsh
 
     - name: Configure Guest
       run: |
@@ -65,16 +53,15 @@ jobs:
       if: ${{ matrix.configuration == 'Debug' }}
       run: |
         # Use the build script with debug configuration
-        $env:CC = "clang-cl.exe"
-        $env:CXX = "clang-cl.exe"
-        .\tools\build.ps1 -Configuration Debug -UwpDeps "C:\bsuwp\_deps\uwpdep-src" -AngleDir "C:\bsuwp\angle"
+        Write-Output "Building Debug configuration"
+        .\tools\build.ps1 -Configuration Debug -UwpDeps "C:\bsuwp\_deps\uwpdep-src"
 
     - name: Configure and Build Host (Release)
       if: ${{ matrix.configuration == 'Release' }}
       run: |
-        $env:CC = "clang-cl.exe"
-        $env:CXX = "clang-cl.exe"
-        .\tools\build.ps1 -Configuration Release -UwpDeps "C:\bsuwp\_deps\uwpdep-src" -AngleDir "C:\bsuwp\angle"
+        # Use the build script with release configuration
+        Write-Output "Building Release configuration"
+        .\tools\build.ps1 -Configuration Release -UwpDeps "C:\bsuwp\_deps\uwpdep-src"
 
     - name: Upload Artifact
       uses: actions/upload-artifact@v3
