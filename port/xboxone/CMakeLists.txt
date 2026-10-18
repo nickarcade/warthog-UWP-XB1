@@ -57,6 +57,7 @@ target_include_directories(OpenCEUWP PRIVATE
   "${REPO_ROOT}/port/android/include"
   "${REPO_ROOT}/port/windows/src"
   "${REPO_ROOT}/port/linux/src"
+  "${REPO_ROOT}/source/memory/zlib"
   "${IMGUI}" "${IMGUI}/backends"
   "${UWP_DEPS}/x64/include" "${UWP_DEPS}/x64/include/SDL2")
 

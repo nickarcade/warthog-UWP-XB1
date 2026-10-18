@@ -276,7 +276,7 @@ int GUEST_ABI host_sdl_show_message_box(uint32_t flags, const char *title, const
     if (count < 0 || count > 8) return -1;
     for (i = 0; i < count; ++i) {
         buttons[i].flags = (Uint32)button_flags[i];
-        buttons[i].buttonID = button_ids[i];
+        buttons[i].buttonid = button_ids[i];
         buttons[i].text = (const char *)(uintptr_t)button_texts[i];
     }
     memset(&box, 0, sizeof(box));
@@ -288,3 +288,9 @@ int GUEST_ABI host_sdl_show_message_box(uint32_t flags, const char *title, const
     return SDL_ShowMessageBox(&box, &answer) == 0 ? answer : -1;
 }
 int GUEST_ABI host_sdl_open_url(const char *url) { return SDL_OpenURL(url) == 0; }
+void GUEST_ABI host_gesture_insets(int *insets) { memset(insets, 0, 4 * sizeof(*insets)); }
+void GUEST_ABI host_touch_read(int *state) { memset(state, 0, 7 * sizeof(*state)); }
+void GUEST_ABI host_touch_look_read(float *delta) { memset(delta, 0, 2 * sizeof(*delta)); }
+void GUEST_ABI host_touch_rumble(unsigned int low, unsigned int high) { (void)low; (void)high; }
+void GUEST_ABI host_touch_scene(int scene) { (void)scene; }
+void GUEST_ABI host_touch_bindings(const int *controls) { (void)controls; }
