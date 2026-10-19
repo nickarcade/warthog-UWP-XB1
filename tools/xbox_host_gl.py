@@ -40,21 +40,37 @@ def main():
     names = []
     for ret, host_name, gl_name, params in declarations:
         params = params.strip()
-        if gl_name == "glShaderSource":
-            lines += [
-                f"void GUEST_ABI {host_name}(GLuint shader, GLsizei count, const unsigned long long *strings, const GLint *lengths)",
-                "{",
-                "    const GLchar *native[16]; GLsizei i;",
-                "    typedef void (GL_APIENTRY *proc_t)(GLuint, GLsizei, const GLchar *const *, const GLint *);",
-                '    static proc_t proc; if (!proc) proc = (proc_t)host_gl_resolve("glShaderSource");',
-                "    if (!proc) return;",
-                "    if (count > 16) count = 16; for (i = 0; i < count; ++i) native[i] = (const GLchar *)(uintptr_t)strings[i];",
-                "    proc(shader, count, native, lengths);",
-                "}", "",
-            ]
-            names.append((host_name, gl_name))
-            continue
-        if gl_name in ("glDrawElementsBaseVertex", "glCopyImageSubData", "glGetIntegerv", "glTexParameteri", "glTexParameterf"):
+        if gl_name in (
+            "glDrawElementsBaseVertex",
+            "glCopyImageSubData",
+            "glGetIntegerv",
+            "glTexParameteri",
+            "glTexParameterf",
+            "glTexImage2D",
+            "glFramebufferTexture2D",
+            "glFramebufferRenderbuffer",
+            "glBindFramebuffer",
+            "glDeleteFramebuffers",
+            "glDrawBuffers",
+            "glReadBuffer",
+            "glBlitFramebuffer",
+            "glGenSamplers",
+            "glDeleteSamplers",
+            "glBindSampler",
+            "glSamplerParameteri",
+            "glSamplerParameterf",
+            "glSamplerParameterfv",
+            "glActiveTexture",
+            "glBindTexture",
+            "glShaderSource",
+            "glCreateProgram",
+            "glAttachShader",
+            "glLinkProgram",
+            "glVertexAttribIPointer",
+            "glGenVertexArrays",
+            "glDeleteVertexArrays",
+            "glBindVertexArray",
+        ):
             names.append((host_name, gl_name))
             continue
         plist = [] if params in ("", "void") else [p.strip() for p in params.split(",")]

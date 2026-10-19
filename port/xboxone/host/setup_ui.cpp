@@ -242,7 +242,9 @@ bool xbox_show_setup_ui(const std::filesystem::path &local_root,
     const float ui_scale = std::clamp(float(screen_height) / 1080.0f, 1.0f, 2.0f);
     io.FontGlobalScale = ui_scale;
     style_launcher(ui_scale);
-    if (!ImGui_ImplSDL2_InitForOpenGL(window, nullptr) || !ImGui_ImplOpenGL3_Init("#version 300 es")) {
+    const char *gl_ver = reinterpret_cast<const char *>(glGetString(GL_VERSION));
+    const char *glsl_ver = (gl_ver && strstr(gl_ver, "OpenGL ES 2.0")) ? "#version 100" : "#version 300 es";
+    if (!ImGui_ImplSDL2_InitForOpenGL(window, nullptr) || !ImGui_ImplOpenGL3_Init(glsl_ver)) {
         host_logf(HOST_LOG_ERROR, "setup UI: ImGui initialization failed");
         ImGui::DestroyContext();
         SDL_DestroyWindow(window);
