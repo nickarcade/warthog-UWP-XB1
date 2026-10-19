@@ -3,6 +3,11 @@
 #include <windows.h>
 #include <string.h>
 #include <stdlib.h>
+#include <EGL/egl.h>
+
+extern EGLDisplay g_egl_display;
+extern EGLContext g_egl_context;
+extern EGLSurface g_egl_surface;
 
 #define HANDLE_COUNT 256
 enum handle_type { HANDLE_FREE, HANDLE_WINDOW, HANDLE_CONTEXT, HANDLE_GAMEPAD, HANDLE_AUDIO };
@@ -70,11 +75,29 @@ int GUEST_ABI host_sdl_gl_set_attribute(int attribute, int value)
 uint32_t GUEST_ABI host_sdl_gl_create_context(uint32_t window)
 {
     (void)window;
+    if (g_egl_context == EGL_NO_CONTEXT) {
+        host_logf(HOST_LOG_ERROR, "Xbox ANGLE EGL: no context available to assign to guest");
+        return 0;
+    }
     host_logf(HOST_LOG_INFO, "Xbox ANGLE EGL context active for guest");
     return handle_new(HANDLE_CONTEXT, (void *)(uintptr_t)1);
 }
 int GUEST_ABI host_sdl_gl_make_current(uint32_t window, uint32_t context)
-{ (void)window; (void)context; return 1; }
+{
+    (void)window;
+    if (!context) {
+        eglMakeCurrent(g_egl_display, EGL_NO_SURFACE, EGL_NO_SURFACE, EGL_NO_CONTEXT);
+        return 1;
+    }
+    if (g_egl_display != EGL_NO_DISPLAY && g_egl_surface != EGL_NO_SURFACE && g_egl_context != EGL_NO_CONTEXT) {
+        if (!eglMakeCurrent(g_egl_display, g_egl_surface, g_egl_surface, g_egl_context)) {
+            host_logf(HOST_LOG_ERROR, "eglMakeCurrent failed on guest thread: error 0x%x", eglGetError());
+            return 0;
+        }
+        return 1;
+    }
+    return 0;
+}
 int GUEST_ABI host_sdl_gl_set_swap_interval(int interval)
 {
     host_logf(HOST_LOG_INFO, "Xbox presentation: swap interval %d accepted (ANGLE EGL)", interval);

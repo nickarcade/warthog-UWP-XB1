@@ -8,6 +8,9 @@
 #include <imgui_impl_sdl2.h>
 #include <EGL/egl.h>
 #include <GLES3/gl3.h>
+extern "C" EGLDisplay g_egl_display;
+extern "C" EGLContext g_egl_context;
+extern "C" EGLSurface g_egl_surface;
 #include <libuwp.h>
 #include <winrt/base.h>
 #include <winrt/Windows.Foundation.Collections.h>
@@ -225,6 +228,8 @@ bool xbox_show_setup_ui(const std::filesystem::path &local_root,
         SDL_DestroyWindow(window);
         return false;
     }
+    // host_egl_initialize() releases the context; claim it on this thread for the setup UI
+    eglMakeCurrent(g_egl_display, g_egl_surface, g_egl_surface, g_egl_context);
 
     IMGUI_CHECKVERSION();
     ImGui::CreateContext();
@@ -384,6 +389,7 @@ bool xbox_show_setup_ui(const std::filesystem::path &local_root,
         destination = std::filesystem::path(to_hstring(state->destination_path).c_str());
     }
     ImGui_ImplOpenGL3_Shutdown();
+    eglMakeCurrent(g_egl_display, EGL_NO_SURFACE, EGL_NO_SURFACE, EGL_NO_CONTEXT);
     ImGui_ImplSDL2_Shutdown();
     ImGui::DestroyContext();
     SDL_DestroyWindow(window);

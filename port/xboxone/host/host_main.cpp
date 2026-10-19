@@ -154,28 +154,32 @@ static void prepare_portable_storage(const std::filesystem::path &internal, cons
     host_logf(HOST_LOG_INFO, "portable storage root: %s", winrt::to_string(selected.wstring()).c_str());
 }
 
+static std::wstring g_current_log_path;
+
 static void open_log_at(const std::filesystem::path &root) {
     std::lock_guard<std::mutex> guard(log_mutex);
     std::error_code error;
     std::filesystem::create_directories(root, error);
-    FILE *replacement = nullptr;
-    const auto path = root / L"warthog.log";
-    const int result = _wfopen_s(&replacement, path.c_str(), L"a");
-    if (result || !replacement) {
-        if (log_file) {
-            fprintf(log_file, "Log relocation failed errno=%d path=%ls\n", result, path.c_str());
-            fflush(log_file);
-        }
-        OutputDebugStringA("Warthog: could not open log; retaining previous destination\n");
-        return;
-    }
-    setvbuf(replacement, nullptr, _IONBF, 0);
+
+    const auto path = (root / L"warthog.log").lexically_normal();
+    if (!g_current_log_path.empty() && _wcsicmp(g_current_log_path.c_str(), path.wstring().c_str()) == 0)
+        return; // already open; do not reopen the same file
+
     if (log_file) {
         fflush(log_file);
         fclose(log_file);
         log_file = nullptr;
     }
+
+    FILE *replacement = nullptr;
+    const int result = _wfopen_s(&replacement, path.c_str(), L"a");
+    if (result || !replacement) {
+        OutputDebugStringA("Warthog: could not open log at destination\n");
+        return;
+    }
+    setvbuf(replacement, nullptr, _IONBF, 0);
     log_file = replacement;
+    g_current_log_path = path.wstring();
     fprintf(log_file, "\n--- Warthog log opened; tick=%llu ---\n", GetTickCount64());
 }
 
@@ -287,10 +291,12 @@ extern "C" int GUEST_ABI host_decompress_map(const char *source_path, const char
     return 1;
 }
 
-static EGLDisplay g_egl_display = EGL_NO_DISPLAY;
-static EGLConfig  g_egl_config  = nullptr;
-static EGLContext g_egl_context = EGL_NO_CONTEXT;
-static EGLSurface g_egl_surface = EGL_NO_SURFACE;
+extern "C" {
+EGLDisplay g_egl_display = EGL_NO_DISPLAY;
+EGLConfig  g_egl_config  = nullptr;
+EGLContext g_egl_context = EGL_NO_CONTEXT;
+EGLSurface g_egl_surface = EGL_NO_SURFACE;
+}
 
 #ifndef EGL_PLATFORM_ANGLE_MAX_VERSION_MAJOR_ANGLE
 #define EGL_PLATFORM_ANGLE_MAX_VERSION_MAJOR_ANGLE 0x3204
@@ -336,42 +342,40 @@ extern "C" int host_egl_initialize(void)
     }
     host_logf(HOST_LOG_INFO, "EGL: initialized display version %d.%d (Microsoft ANGLE D3D11)", major, minor);
 
-    const EGLint configAttributes[] = {
-        EGL_RED_SIZE, 8,
-        EGL_GREEN_SIZE, 8,
-        EGL_BLUE_SIZE, 8,
-        EGL_ALPHA_SIZE, 8,
-        EGL_DEPTH_SIZE, 24,
-        EGL_STENCIL_SIZE, 8,
-        EGL_RENDERABLE_TYPE, EGL_OPENGL_ES3_BIT,
-        EGL_SURFACE_TYPE, EGL_WINDOW_BIT,
-        EGL_NONE,
-    };
-
+    // UWP ms-angle on Xbox One (D3D11 FL 11_0) may tag configs only with ES2_BIT
     EGLint num_configs = 0;
-    if (!eglChooseConfig(g_egl_display, configAttributes, &g_egl_config, 1, &num_configs) || num_configs < 1) {
-        const EGLint fallbackConfigAttributes[] = {
-            EGL_RED_SIZE, 8,
-            EGL_GREEN_SIZE, 8,
-            EGL_BLUE_SIZE, 8,
-            EGL_ALPHA_SIZE, 8,
-            EGL_DEPTH_SIZE, 24,
-            EGL_RENDERABLE_TYPE, EGL_OPENGL_ES3_BIT,
-            EGL_NONE,
-        };
-        if (!eglChooseConfig(g_egl_display, fallbackConfigAttributes, &g_egl_config, 1, &num_configs) || num_configs < 1) {
-            host_logf(HOST_LOG_ERROR, "EGL: failed to choose GLES 3.0 config (error 0x%x)", eglGetError());
-            return 0;
+    const EGLint renderable_types[] = { EGL_OPENGL_ES3_BIT, EGL_OPENGL_ES2_BIT };
+    const EGLint depth_sizes[]      = { 24, 16 };
+    for (int r = 0; r < 2 && num_configs < 1; ++r) {
+        for (int d = 0; d < 2 && num_configs < 1; ++d) {
+            const EGLint configAttributes[] = {
+                EGL_RED_SIZE,        8,
+                EGL_GREEN_SIZE,      8,
+                EGL_BLUE_SIZE,       8,
+                EGL_ALPHA_SIZE,      8,
+                EGL_DEPTH_SIZE,      depth_sizes[d],
+                EGL_STENCIL_SIZE,    8,
+                EGL_RENDERABLE_TYPE, renderable_types[r],
+                EGL_SURFACE_TYPE,    EGL_WINDOW_BIT,
+                EGL_NONE,
+            };
+            if (!eglChooseConfig(g_egl_display, configAttributes, &g_egl_config, 1, &num_configs))
+                num_configs = 0;
         }
     }
+    if (num_configs < 1 || !g_egl_config) {
+        host_logf(HOST_LOG_ERROR, "EGL: failed to choose GLES config (error 0x%x)", eglGetError());
+        return 0;
+    }
 
-    const EGLint contextAttributes[] = {
-        EGL_CONTEXT_CLIENT_VERSION, 3,
-        EGL_NONE,
-    };
-    g_egl_context = eglCreateContext(g_egl_display, g_egl_config, EGL_NO_CONTEXT, contextAttributes);
+    const EGLint contextAttributesES3[] = { EGL_CONTEXT_CLIENT_VERSION, 3, EGL_NONE };
+    g_egl_context = eglCreateContext(g_egl_display, g_egl_config, EGL_NO_CONTEXT, contextAttributesES3);
     if (g_egl_context == EGL_NO_CONTEXT) {
-        host_logf(HOST_LOG_ERROR, "EGL: failed to create GLES 3.0 context (error 0x%x)", eglGetError());
+        const EGLint contextAttributesES2[] = { EGL_CONTEXT_CLIENT_VERSION, 2, EGL_NONE };
+        g_egl_context = eglCreateContext(g_egl_display, g_egl_config, EGL_NO_CONTEXT, contextAttributesES2);
+    }
+    if (g_egl_context == EGL_NO_CONTEXT) {
+        host_logf(HOST_LOG_ERROR, "EGL: failed to create GLES context (error 0x%x)", eglGetError());
         return 0;
     }
 
@@ -390,12 +394,10 @@ extern "C" int host_egl_initialize(void)
         return 0;
     }
 
-    if (!eglMakeCurrent(g_egl_display, g_egl_surface, g_egl_surface, g_egl_context)) {
-        host_logf(HOST_LOG_ERROR, "EGL: failed to make current context (error 0x%x)", eglGetError());
-        return 0;
-    }
+    // Release from this thread so the guest execution thread can claim the context
+    eglMakeCurrent(g_egl_display, EGL_NO_SURFACE, EGL_NO_SURFACE, EGL_NO_CONTEXT);
 
-    host_logf(HOST_LOG_INFO, "EGL: ANGLE D3D11 / GLES 3.0 context and surface current");
+    host_logf(HOST_LOG_INFO, "EGL: ANGLE D3D11 initialized successfully (ready for guest thread)");
     return 1;
 }
 
@@ -556,7 +558,8 @@ extern "C" int SDL_main(int, char **) {
     if (host_egl_initialize()) {
         host_logf(HOST_LOG_INFO, "ANGLE D3D11 EGL display initialized successfully (%dx%d)", physical_width, physical_height);
     } else {
-        host_logf(HOST_LOG_ERROR, "ANGLE D3D11 EGL display initialization failed");
+        host_fatal("ANGLE D3D11 EGL display initialization failed; check warthog.log");
+        return 1;
     }
 
     std::vector<std::filesystem::path> data_roots{internal};
