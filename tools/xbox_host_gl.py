@@ -38,41 +38,40 @@ def main():
         "",
     ]
     names = []
+    custom_functions = {
+        "glDrawElementsBaseVertex",
+        "glCopyImageSubData",
+        "glGetIntegerv",
+        "glTexParameteri",
+        "glTexParameterf",
+        "glTexImage2D",
+        "glFramebufferTexture2D",
+        "glFramebufferRenderbuffer",
+        "glBindFramebuffer",
+        "glDeleteFramebuffers",
+        "glDrawBuffers",
+        "glReadBuffer",
+        "glBlitFramebuffer",
+        "glGenSamplers",
+        "glDeleteSamplers",
+        "glBindSampler",
+        "glSamplerParameteri",
+        "glSamplerParameterf",
+        "glSamplerParameterfv",
+        "glActiveTexture",
+        "glBindTexture",
+        "glShaderSource",
+        "glCreateProgram",
+        "glAttachShader",
+        "glLinkProgram",
+        "glVertexAttribIPointer",
+        "glGenVertexArrays",
+        "glDeleteVertexArrays",
+        "glBindVertexArray",
+    }
+
     for ret, host_name, gl_name, params in declarations:
         params = params.strip()
-        if gl_name in (
-            "glDrawElementsBaseVertex",
-            "glCopyImageSubData",
-            "glGetIntegerv",
-            "glTexParameteri",
-            "glTexParameterf",
-            "glTexImage2D",
-            "glFramebufferTexture2D",
-            "glFramebufferRenderbuffer",
-            "glBindFramebuffer",
-            "glDeleteFramebuffers",
-            "glDrawBuffers",
-            "glReadBuffer",
-            "glBlitFramebuffer",
-            "glGenSamplers",
-            "glDeleteSamplers",
-            "glBindSampler",
-            "glSamplerParameteri",
-            "glSamplerParameterf",
-            "glSamplerParameterfv",
-            "glActiveTexture",
-            "glBindTexture",
-            "glShaderSource",
-            "glCreateProgram",
-            "glAttachShader",
-            "glLinkProgram",
-            "glVertexAttribIPointer",
-            "glGenVertexArrays",
-            "glDeleteVertexArrays",
-            "glBindVertexArray",
-        ):
-            names.append((host_name, gl_name))
-            continue
         plist = [] if params in ("", "void") else [p.strip() for p in params.split(",")]
         args = []
         named = []
@@ -81,6 +80,12 @@ def main():
             named.append(f"{param} {name}")
             args.append(name)
         signature = ", ".join(named) or "void"
+
+        if gl_name in custom_functions:
+            lines += [f"extern {ret} GUEST_ABI {host_name}({signature});"]
+            names.append((host_name, gl_name))
+            continue
+
         call = f"proc({', '.join(args)})"
         lines += [
             f"{ret} GUEST_ABI {host_name}({signature})",
@@ -94,6 +99,7 @@ def main():
         names.append((host_name, gl_name))
 
     lines += [
+        "",
         "void GUEST_ABI host_gl_get_string(uint32_t name, int index, char *buffer, uint32_t size)",
         "{",
         "    typedef const GLubyte *(GL_APIENTRY *p_glGetString)(GLenum);",
@@ -122,7 +128,6 @@ def main():
         "    static p_glGetStringi p_gsi;",
         "    static p_glGetString p_gs;",
         "    if (!name || !*name) return 0;",
-        "    /* Prune desktop OpenGL 4.5 extensions unsupported by ANGLE GLES 3.0 */",
         '    if (!strncmp(name, "GL_ARB_", 7)) return 0;',
         '    if (!strncmp(name, "WGL_", 4)) return 0;',
         '    if (!strcmp(name, "GL_EXT_polygon_offset_clamp")) return 0;',

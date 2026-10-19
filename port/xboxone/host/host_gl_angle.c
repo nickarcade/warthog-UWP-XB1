@@ -17,6 +17,9 @@
 #ifndef GL_DEPTH24_STENCIL8_OES
 #define GL_DEPTH24_STENCIL8_OES 0x88F0
 #endif
+#ifndef GL_DEPTH24_STENCIL8
+#define GL_DEPTH24_STENCIL8 0x88F0
+#endif
 #ifndef GL_CLAMP_TO_BORDER
 #define GL_CLAMP_TO_BORDER 0x812D
 #endif
@@ -86,7 +89,7 @@ void GUEST_ABI hostgl_glBindVertexArray(GLuint array) {
 }
 
 /* =========================================================================
- * 2. Texture & Framebuffer Shims (Resolves 0x8cd6 Incomplete Attachments)
+ * 2. Texture & Framebuffer Shims
  * ========================================================================= */
 #define MAX_TRACKED_FBOS 512
 static struct {
@@ -177,7 +180,6 @@ void GUEST_ABI hostgl_glTexImage2D(
     }
     glTexImage2D(target, level, internalformat, width, height, border, format, type, pixels);
 
-    /* Enforce filter completeness for base level render targets */
     if (is_gles2_context() && level == 0 && target == GL_TEXTURE_2D) {
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
@@ -354,7 +356,7 @@ static void record_shader_attr(GLuint shader, int loc, const char *name) {
         s_shader_info[slot].shader = shader;
         s_shader_info[slot].attr_mask |= (1u << loc);
         strncpy(s_shader_info[slot].attr_names[loc], name, 31);
-        s_shader_info[slot].attr_names[loc][31] = ' ';
+        s_shader_info[slot].attr_names[loc][31] = '\0';
     }
 }
 
@@ -445,15 +447,16 @@ static char *translate_es3_to_es2_shader(GLuint shader, const char *src) {
     if (strstr(src, "uniform samplerCube tex2;")) tex_is_cube[2] = 1;
     if (strstr(src, "uniform samplerCube tex3;")) tex_is_cube[3] = 1;
 
-    char *s = _strdup(src);
+    char *s = strdup(src);
     char *tmp;
 
-    #define APPLY_REPL(old_s, new_s) do {         tmp = replace_all(s, (old_s), (new_s));         if (tmp) { free(s); s = tmp; }     } while (0)
+    #define APPLY_REPL(old_s, new_s) do { \
+        tmp = replace_all(s, (old_s), (new_s)); \
+        if (tmp) { free(s); s = tmp; } \
+    } while (0)
 
-    APPLY_REPL("#version 300 es", "#version 100
-#extension GL_OES_standard_derivatives : enable");
-    APPLY_REPL("#version 310 es", "#version 100
-#extension GL_OES_standard_derivatives : enable");
+    APPLY_REPL("#version 300 es", "#version 100\n#extension GL_OES_standard_derivatives : enable\n");
+    APPLY_REPL("#version 310 es", "#version 100\n#extension GL_OES_standard_derivatives : enable\n");
     APPLY_REPL("precision highp sampler2D;", "");
     APPLY_REPL("precision highp sampler3D;", "");
     APPLY_REPL("precision highp samplerCube;", "");
@@ -461,38 +464,23 @@ static char *translate_es3_to_es2_shader(GLuint shader, const char *src) {
 
     if (is_vs) {
         const char *old_unpack =
-            "vec4 unpack_normpacked3(uint p)
-"
-            "{
-"
-            "	int x = int(p << 21) >> 21;
-"
-            "	int y = int(p << 10) >> 21;
-"
-            "	int z = int(p) >> 22;
-"
-            "	return vec4(float(x) / 1023.0, float(y) / 1023.0, float(z) / 511.0, 1.0);
-"
+            "vec4 unpack_normpacked3(uint p)\n"
+            "{\n"
+            "\tint x = int(p << 21) >> 21;\n"
+            "\tint y = int(p << 10) >> 21;\n"
+            "\tint z = int(p) >> 22;\n"
+            "\treturn vec4(float(x) / 1023.0, float(y) / 1023.0, float(z) / 511.0, 1.0);\n"
             "}";
         const char *new_unpack =
-            "vec4 unpack_normpacked3(float p)
-"
-            "{
-"
-            "	float x = mod(p, 2048.0);
-"
-            "	if (x >= 1024.0) x -= 2048.0;
-"
-            "	float y = mod(floor(p / 2048.0), 2048.0);
-"
-            "	if (y >= 1024.0) y -= 2048.0;
-"
-            "	float z = floor(p / 4194304.0);
-"
-            "	if (z >= 512.0) z -= 1024.0;
-"
-            "	return vec4(x / 1023.0, y / 1023.0, z / 511.0, 1.0);
-"
+            "vec4 unpack_normpacked3(float p)\n"
+            "{\n"
+            "\tfloat x = mod(p, 2048.0);\n"
+            "\tif (x >= 1024.0) x -= 2048.0;\n"
+            "\tfloat y = mod(floor(p / 2048.0), 2048.0);\n"
+            "\tif (y >= 1024.0) y -= 2048.0;\n"
+            "\tfloat z = floor(p / 4194304.0);\n"
+            "\tif (z >= 512.0) z -= 1024.0;\n"
+            "\treturn vec4(x / 1023.0, y / 1023.0, z / 511.0, 1.0);\n"
             "}";
         APPLY_REPL(old_unpack, new_unpack);
 
@@ -526,27 +514,21 @@ static char *translate_es3_to_es2_shader(GLuint shader, const char *src) {
             APPLY_REPL("layout(location = 2) in vec4 color;", "attribute vec4 color;");
         }
 
-        APPLY_REPL("
-out ", "
-varying ");
+        APPLY_REPL("\nout ", "\nvarying ");
         APPLY_REPL("vec4(lessThan(A, B))",
                    "vec4(A.x < B.x ? 1.0 : 0.0, A.y < B.y ? 1.0 : 0.0, A.z < B.z ? 1.0 : 0.0, A.w < B.w ? 1.0 : 0.0)");
     } else {
-        APPLY_REPL("
-in ", "
-varying ");
+        APPLY_REPL("\nin ", "\nvarying ");
         APPLY_REPL("layout(location = 0) out vec4 fragment_color;", "");
         APPLY_REPL("layout(location = 0) out vec4 color;", "");
         APPLY_REPL("fragment_color =", "gl_FragColor =");
 
         const char *old_fetch =
-            "		ivec2 size = textureSize(tex0, 0);
-"
-            "		ivec2 pixel = clamp(ivec2(floor(uv * vec2(size))), ivec2(0), size - 1);
-"
-            "		float threshold = texelFetch(tex0, pixel, 0).r;";
+            "\t\tivec2 size = textureSize(tex0, 0);\n"
+            "\t\tivec2 pixel = clamp(ivec2(floor(uv * vec2(size))), ivec2(0), size - 1);\n"
+            "\t\tfloat threshold = texelFetch(tex0, pixel, 0).r;";
         const char *new_fetch =
-            "		float threshold = texture2D(tex0, uv).r;";
+            "\t\tfloat threshold = texture2D(tex0, uv).r;";
         APPLY_REPL(old_fetch, new_fetch);
 
         for (int t = 0; t < 4; ++t) {
@@ -582,7 +564,7 @@ void GUEST_ABI hostgl_glShaderSource(
         memcpy(dst, part, len);
         dst += len;
     }
-    *dst = ' ';
+    *dst = '\0';
 
     if (is_gles2_context() && strstr(combined, "#version 3")) {
         char *translated = translate_es3_to_es2_shader(shader, combined);
@@ -618,27 +600,17 @@ static GLint  s_blit_u_tex = -1;
 static void ensure_blit_program(void) {
     if (s_blit_prog) return;
     const char *vs_src =
-        "#version 100
-"
-        "attribute vec2 a_pos;
-"
-        "attribute vec2 a_uv;
-"
-        "varying vec2 v_uv;
-"
-        "void main() { gl_Position = vec4(a_pos, 0.0, 1.0); v_uv = a_uv; }
-";
+        "#version 100\n"
+        "attribute vec2 a_pos;\n"
+        "attribute vec2 a_uv;\n"
+        "varying vec2 v_uv;\n"
+        "void main() { gl_Position = vec4(a_pos, 0.0, 1.0); v_uv = a_uv; }\n";
     const char *fs_src =
-        "#version 100
-"
-        "precision mediump float;
-"
-        "varying vec2 v_uv;
-"
-        "uniform sampler2D u_tex;
-"
-        "void main() { gl_FragColor = texture2D(u_tex, v_uv); }
-";
+        "#version 100\n"
+        "precision mediump float;\n"
+        "varying vec2 v_uv;\n"
+        "uniform sampler2D u_tex;\n"
+        "void main() { gl_FragColor = texture2D(u_tex, v_uv); }\n";
 
     GLuint vs = glCreateShader(GL_VERTEX_SHADER);
     glShaderSource(vs, 1, &vs_src, NULL);
@@ -739,6 +711,7 @@ void GUEST_ABI hostgl_glBlitFramebuffer(
 void GUEST_ABI hostgl_glDrawElementsBaseVertex(
     GLenum mode, GLsizei count, GLenum type, const void *indices, GLint basevertex)
 {
+    (void)basevertex;
     glDrawElements(mode, count, type, indices);
 }
 
